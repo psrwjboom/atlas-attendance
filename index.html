@@ -295,6 +295,23 @@ function loadCheckedInList() {
     });
 }
 
+// รีเซ็ตกลับไปหน้าแรกทั้งหมด (เลือกกลุ่มใหม่) หลังบันทึกเวลาสำเร็จ
+// เพื่อให้พนักงานคนต่อไปใช้เครื่องต่อได้ทันทีโดยไม่เห็นข้อมูล/รูปของคนก่อนหน้า
+function resetToStart() {
+  state.group = null;
+  state.name = null;
+  state.knownCheckinTime = null;
+  document.getElementById('btnATL').classList.remove('active');
+  document.getElementById('btnCC').classList.remove('active');
+  document.getElementById('checkedInCard').classList.add('hidden');
+  document.getElementById('checkedInListWrap').innerHTML = '<div class="muted-loading">กำลังโหลด...</div>';
+  document.getElementById('nameCard').classList.add('hidden');
+  document.getElementById('nameSelect').innerHTML = '<option value="">-- เลือกชื่อ --</option>';
+  document.getElementById('actionCard').classList.add('hidden');
+  resetFrom('all');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function resetFrom(fromStep) {
   document.getElementById('cameraCard').classList.add('hidden');
   document.getElementById('otCard').classList.add('hidden');
@@ -528,6 +545,7 @@ function submitRecord() {
       if (res.success) {
         loadCheckedInList(); // อัปเดตกล่องพนักงานที่เข้างานแล้วให้ล่าสุด
         refreshStatusBadge(); // อัปเดตป้ายสถานะของชื่อที่เลือกอยู่ให้ล่าสุด
+        setTimeout(resetToStart, 2500); // แสดงผลสำเร็จสักครู่ แล้วรีเซ็ตกลับหน้าแรกให้คนต่อไปใช้ต่อได้เลย
       }
     })
     .catch(err => {
