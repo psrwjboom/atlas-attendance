@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <!--
   ไฟล์นี้เป็นหน้าเว็บสำหรับพนักงาน "แยกต่างหาก" จาก Google Apps Script
@@ -306,19 +307,20 @@ function loadCheckedInList() {
     .then(([atlRes, ccRes]) => {
       const atlList = (atlRes.success ? atlRes.data : []).map(r => Object.assign({ group: 'ATL' }, r));
       const ccList = (ccRes.success ? ccRes.data : []).map(r => Object.assign({ group: 'CC' }, r));
-      const combined = atlList.concat(ccList).sort((a, b) => (a.checkinTime < b.checkinTime ? -1 : 1));
+      // แสดงเฉพาะคนที่ "เข้างานแล้วแต่ยังไม่ได้ลงเวลาออก" เท่านั้น (ออกไปแล้วให้หายจากกล่องนี้)
+      const combined = atlList.concat(ccList)
+        .filter(r => !r.checkoutTime)
+        .sort((a, b) => (a.checkinTime < b.checkinTime ? -1 : 1));
 
       if (!combined.length) {
-        wrap.innerHTML = '<div class="empty-note">ยังไม่มีใครลงเวลาเข้างานวันนี้</div>';
+        wrap.innerHTML = '<div class="empty-note">ไม่มีพนักงานที่กำลังทำงานอยู่ตอนนี้</div>';
         return;
       }
       wrap.innerHTML = combined.map(r => {
         const statusNote = r.checkinStatus && r.checkinStatus !== 'ปกติ' ? ' (' + r.checkinStatus + ')' : '';
-        const outNote = r.checkoutTime
-          ? '<span class="ci-time done">เข้า ' + r.checkinTime + statusNote + ' · ออก ' + r.checkoutTime + '</span>'
-          : '<span class="ci-time">เข้า ' + r.checkinTime + statusNote + '</span>';
         return '<div class="checkedin-row"><span class="ci-name">' + r.name +
-          ' <span class="ci-group">' + r.group + '</span></span>' + outNote + '</div>';
+          ' <span class="ci-group">' + r.group + '</span></span>' +
+          '<span class="ci-time">เข้า ' + r.checkinTime + statusNote + '</span></div>';
       }).join('');
     })
     .catch(() => {
@@ -346,6 +348,7 @@ function resetToStart() {
 
 function resetFrom(fromStep) {
   document.getElementById('cameraCard').classList.add('hidden');
+  document.getElementById('checkedInCard').classList.remove('hidden'); // กลับมาแสดงกล่องพนักงานที่เข้างานแล้วเมื่อออกจากขั้นตอนกล้อง
   document.getElementById('otCard').classList.add('hidden');
   document.getElementById('submitCard').classList.add('hidden');
   document.getElementById('statusBadgeWrap').innerHTML = '';
@@ -407,6 +410,7 @@ function selectAction(action) {
   document.getElementById('cameraLabel').textContent =
     action === 'checkin' ? '4. ถ่ายรูปตอนลงเวลาเข้างาน' : '4. ถ่ายรูปตอนลงเวลาออกงาน';
   document.getElementById('cameraCard').classList.remove('hidden');
+  document.getElementById('checkedInCard').classList.add('hidden'); // ซ่อนกล่องพนักงานที่เข้างานแล้วระหว่างเปิดกล้อง
   document.getElementById('otCard').classList.add('hidden');
   document.getElementById('submitCard').classList.add('hidden');
   document.getElementById('autoResultWrap').innerHTML = '';
