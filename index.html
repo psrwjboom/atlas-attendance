@@ -319,8 +319,16 @@ function onNameChange() {
   document.getElementById('actionCard').classList.add('hidden');
   if (!name) return;
   state.name = name;
+  refreshStatusBadge(() => {
+    document.getElementById('actionCard').classList.remove('hidden');
+  });
+}
 
-  apiGet('getTodayStatus', { group: state.group, name: name })
+// ดึงสถานะวันนี้ของพนักงานที่เลือกอยู่ใหม่ แล้วอัปเดตป้ายสถานะ
+// เรียกใช้ทั้งตอนเลือกชื่อ และหลังบันทึกเวลาสำเร็จ เพื่อให้ป้ายอัปเดตทันที
+function refreshStatusBadge(onDone) {
+  if (!state.group || !state.name) return;
+  apiGet('getTodayStatus', { group: state.group, name: state.name })
     .then(res => {
       if (!res.success) throw new Error(res.message);
       const status = res.data;
@@ -334,12 +342,11 @@ function onNameChange() {
       } else {
         badgeWrap.innerHTML = '<span class="status-badge badge-done">ลงเวลาครบแล้ววันนี้ (เข้า ' + status.checkinTime + ' / ออก ' + status.checkoutTime + ')</span>';
       }
-      // เลือกลงเวลาเข้า/ออกได้เองเสมอ ไม่ว่าจะลงเวลาเข้าไปแล้วหรือยัง
-      document.getElementById('actionCard').classList.remove('hidden');
+      if (onDone) onDone();
     })
     .catch(err => {
       document.getElementById('statusBadgeWrap').innerHTML = '<span class="status-badge badge-checkout">ตรวจสอบสถานะไม่สำเร็จ: ' + err.message + '</span>';
-      document.getElementById('actionCard').classList.remove('hidden'); // ยังให้เลือกได้แม้เช็คสถานะไม่สำเร็จ
+      if (onDone) onDone(); // ยังให้เลือกได้แม้เช็คสถานะไม่สำเร็จ
     });
 }
 
@@ -518,7 +525,10 @@ function submitRecord() {
       } else {
         autoWrap.innerHTML = '<div class="card">' + html + '</div>';
       }
-      if (res.success) loadCheckedInList(); // อัปเดตกล่องพนักงานที่เข้างานแล้วให้ล่าสุด
+      if (res.success) {
+        loadCheckedInList(); // อัปเดตกล่องพนักงานที่เข้างานแล้วให้ล่าสุด
+        refreshStatusBadge(); // อัปเดตป้ายสถานะของชื่อที่เลือกอยู่ให้ล่าสุด
+      }
     })
     .catch(err => {
       const html = '<div class="msg err">⚠️ เกิดข้อผิดพลาด: ' + err.message + '</div>';
