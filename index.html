@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <!--
   ไฟล์นี้เป็นหน้าเว็บสำหรับพนักงาน "แยกต่างหาก" จาก Google Apps Script
@@ -142,20 +143,29 @@
     <div id="statusBadgeWrap"></div>
   </div>
 
-  <!-- STEP 3: กล้อง -->
+  <!-- STEP 3: เลือกลงเวลาเข้า/ออก (เลือกเองได้ตลอดเวลา) -->
+  <div class="card hidden" id="actionCard">
+    <div class="step-label">3. เลือกรายการที่จะลงเวลา</div>
+    <div class="group-btns">
+      <button class="group-btn" id="btnCheckin" onclick="selectAction('checkin')">🟢 ลงเวลาเข้างาน</button>
+      <button class="group-btn" id="btnCheckout" onclick="selectAction('checkout')">🔴 ลงเวลาออกงาน</button>
+    </div>
+  </div>
+
+  <!-- STEP 4: กล้อง -->
   <div class="card hidden" id="cameraCard">
-    <div class="step-label" id="cameraLabel">3. ถ่ายรูป</div>
+    <div class="step-label" id="cameraLabel">4. ถ่ายรูป</div>
     <video id="video" autoplay playsinline class="hidden"></video>
     <img id="photoPreview" />
     <canvas id="canvas" class="hidden"></canvas>
     <button class="btn secondary" id="startCamBtn" onclick="startCamera()">เปิดกล้อง</button>
-    <button class="btn" id="captureBtn" onclick="capturePhoto()" style="display:none">📸 ถ่ายรูป</button>
+    <button class="btn" id="captureBtn" onclick="capturePhoto()" style="display:none">📸 ถ่ายรูป (บันทึกอัตโนมัติ)</button>
     <button class="btn secondary" id="retakeBtn" style="display:none" onclick="retakePhoto()">ถ่ายใหม่</button>
   </div>
 
-  <!-- STEP 4: โอที (แสดงเฉพาะเมื่อจำเป็น) -->
+  <!-- STEP 5: โอที (แสดงเฉพาะเมื่อจำเป็น) -->
   <div class="card hidden" id="otCard">
-    <div class="step-label" id="otLabel">4. เลือกโอที</div>
+    <div class="step-label" id="otLabel">5. เลือกโอที</div>
     <div class="ot-row">
       <button class="ot-btn yes" id="otYesBtn" onclick="setOt('OT')">โอที</button>
       <button class="ot-btn no" id="otNoBtn" onclick="setOt('NO')">ไม่โอที</button>
@@ -163,16 +173,19 @@
     <textarea id="otDetail" class="hidden" placeholder="ระบุรายละเอียดงานที่ทำ..."></textarea>
   </div>
 
-  <!-- STEP 5: บันทึก -->
+  <!-- STEP 6: บันทึก (ใช้เฉพาะกรณีเลือกโอทีแล้วต้องกรอกรายละเอียดก่อนยืนยัน) -->
   <div class="card hidden" id="submitCard">
-    <button class="btn" id="submitBtn" onclick="submitRecord()">บันทึกเวลา</button>
+    <button class="btn" id="submitBtn" onclick="submitRecord()">ยืนยันบันทึกเวลา</button>
     <div id="resultMsg"></div>
   </div>
+
+  <!-- แสดงผลลัพธ์/สถานะระหว่างบันทึกอัตโนมัติ (กรณีไม่มีปุ่มยืนยัน) -->
+  <div id="autoResultWrap"></div>
 </div>
 
 <script>
 // *** แก้ตรงนี้: ใส่ลิงก์ .../exec ที่ได้จากการ Deploy Apps Script (Code.gs) ***
-const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw3A3iCCLs7YEO2DnRYrCFZ7y-Ra8wl9UPTjKSVi5KR_n81kH-NpgeAKWVTO_7rbPwncg/exec';
+const WEBAPP_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
 
 const NORMAL_CHECKIN = '07:50:00';
 const NORMAL_CHECKOUT = '17:10:00';
@@ -199,8 +212,9 @@ function apiPost(action, payload) {
 let state = {
   group: null,
   name: null,
-  action: null,       // 'checkin' | 'checkout' | 'done'
-  checkinTime: null,  // used to compute worked minutes for checkout
+  action: null,       // 'checkin' | 'checkout'
+  checkinTime: null,  // ใช้คำนวณเวลารวมตอนลงเวลาออก (ถ้ามี)
+  knownCheckinTime: null,
   photoBase64: null,
   needsOt: false,
   otChoice: null,      // 'OT' | 'NO'
@@ -243,6 +257,9 @@ function resetFrom(fromStep) {
   document.getElementById('submitCard').classList.add('hidden');
   document.getElementById('statusBadgeWrap').innerHTML = '';
   document.getElementById('resultMsg').innerHTML = '';
+  document.getElementById('autoResultWrap').innerHTML = '';
+  document.getElementById('btnCheckin').classList.remove('active');
+  document.getElementById('btnCheckout').classList.remove('active');
   state.action = null; state.photoBase64 = null; state.needsOt = false; state.otChoice = null;
   document.getElementById('photoPreview').style.display = 'none';
   document.getElementById('video').classList.add('hidden');
@@ -255,6 +272,7 @@ function resetFrom(fromStep) {
 function onNameChange() {
   const name = document.getElementById('nameSelect').value;
   resetFrom('camera');
+  document.getElementById('actionCard').classList.add('hidden');
   if (!name) return;
   state.name = name;
 
@@ -262,25 +280,43 @@ function onNameChange() {
     .then(res => {
       if (!res.success) throw new Error(res.message);
       const status = res.data;
-      state.action = status.action;
-      state.checkinTime = status.checkinTime || null;
+      state.knownCheckinTime = status.checkinTime || null; // ใช้คำนวณโอทีตอนออกงาน ถ้ามี
       const badgeWrap = document.getElementById('statusBadgeWrap');
 
       if (status.action === 'checkin') {
         badgeWrap.innerHTML = '<span class="status-badge badge-checkin">ยังไม่ได้ลงเวลาเข้างานวันนี้</span>';
-        document.getElementById('cameraLabel').textContent = '3. ถ่ายรูปตอนลงเวลาเข้างาน';
       } else if (status.action === 'checkout') {
         badgeWrap.innerHTML = '<span class="status-badge badge-checkout">เข้างานแล้วเวลา ' + status.checkinTime + ' — รอลงเวลาออก</span>';
-        document.getElementById('cameraLabel').textContent = '3. ถ่ายรูปตอนลงเวลาออกงาน';
       } else {
         badgeWrap.innerHTML = '<span class="status-badge badge-done">ลงเวลาครบแล้ววันนี้ (เข้า ' + status.checkinTime + ' / ออก ' + status.checkoutTime + ')</span>';
-        return;
       }
-      document.getElementById('cameraCard').classList.remove('hidden');
+      // เลือกลงเวลาเข้า/ออกได้เองเสมอ ไม่ว่าจะลงเวลาเข้าไปแล้วหรือยัง
+      document.getElementById('actionCard').classList.remove('hidden');
     })
     .catch(err => {
       document.getElementById('statusBadgeWrap').innerHTML = '<span class="status-badge badge-checkout">ตรวจสอบสถานะไม่สำเร็จ: ' + err.message + '</span>';
+      document.getElementById('actionCard').classList.remove('hidden'); // ยังให้เลือกได้แม้เช็คสถานะไม่สำเร็จ
     });
+}
+
+function selectAction(action) {
+  state.action = action;
+  state.checkinTime = state.knownCheckinTime || null; // มีค่าเฉพาะกรณีลงเวลาออกและเคยลงเวลาเข้าไว้แล้ว
+  document.getElementById('btnCheckin').classList.toggle('active', action === 'checkin');
+  document.getElementById('btnCheckout').classList.toggle('active', action === 'checkout');
+  document.getElementById('cameraLabel').textContent =
+    action === 'checkin' ? '4. ถ่ายรูปตอนลงเวลาเข้างาน' : '4. ถ่ายรูปตอนลงเวลาออกงาน';
+  document.getElementById('cameraCard').classList.remove('hidden');
+  document.getElementById('otCard').classList.add('hidden');
+  document.getElementById('submitCard').classList.add('hidden');
+  document.getElementById('autoResultWrap').innerHTML = '';
+  state.photoBase64 = null;
+  document.getElementById('photoPreview').style.display = 'none';
+  document.getElementById('video').classList.add('hidden');
+  document.getElementById('startCamBtn').style.display = 'block';
+  document.getElementById('captureBtn').style.display = 'none';
+  document.getElementById('retakeBtn').style.display = 'none';
+  stopCamera();
 }
 
 // ---------- กล้อง ----------
@@ -325,7 +361,7 @@ function capturePhoto() {
   document.getElementById('retakeBtn').style.display = 'block';
   stopCamera();
 
-  evaluateOtAndShowSubmit();
+  evaluateOtAndAct();
 }
 
 function retakePhoto() {
@@ -334,6 +370,7 @@ function retakePhoto() {
   document.getElementById('retakeBtn').style.display = 'none';
   document.getElementById('otCard').classList.add('hidden');
   document.getElementById('submitCard').classList.add('hidden');
+  document.getElementById('autoResultWrap').innerHTML = '';
   startCamera();
 }
 
@@ -343,20 +380,23 @@ function toMinutes(t) {
   return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
 }
 
-function evaluateOtAndShowSubmit() {
+// ประเมินว่าต้องถามโอทีไหม ถ้าไม่ต้อง -> บันทึกอัตโนมัติทันที
+// ถ้าต้อง -> แสดงปุ่มเลือกโอที/ไม่โอที (เลือก "ไม่โอที" จะบันทึกอัตโนมัติทันที
+// เลือก "โอที" จะให้กรอกรายละเอียดแล้วกดปุ่มยืนยันเอง)
+function evaluateOtAndAct() {
   const now = new Date();
   const nowStr = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
   let needsOt = false;
 
   if (state.action === 'checkin') {
     needsOt = nowStr < NORMAL_CHECKIN;
-    document.getElementById('otLabel').textContent = '4. เข้างานก่อนเวลาปกติ (07:50 น.) — เลือกโอที';
+    document.getElementById('otLabel').textContent = '5. เข้างานก่อนเวลาปกติ (07:50 น.) — เลือกโอที';
   } else if (state.action === 'checkout') {
     const workedMinutes = state.checkinTime ? (toMinutes(nowStr) - toMinutes(state.checkinTime)) : 0;
     const isLate = nowStr > NORMAL_CHECKOUT;
-    const isOverMax = workedMinutes > MAX_WORK_MINUTES;
+    const isOverMax = state.checkinTime ? (workedMinutes > MAX_WORK_MINUTES) : false;
     needsOt = isLate || isOverMax;
-    document.getElementById('otLabel').textContent = '4. เลิกงานหลังเวลาปกติ หรือทำงานเกิน 9 ชม. 30 นาที — เลือกโอที';
+    document.getElementById('otLabel').textContent = '5. เลิกงานหลังเวลาปกติ หรือทำงานเกิน 9 ชม. 30 นาที — เลือกโอที';
   }
 
   state.needsOt = needsOt;
@@ -365,13 +405,13 @@ function evaluateOtAndShowSubmit() {
   document.getElementById('otNoBtn').classList.remove('active');
   document.getElementById('otDetail').classList.add('hidden');
   document.getElementById('otDetail').value = '';
+  document.getElementById('submitCard').classList.add('hidden');
 
   if (needsOt) {
     document.getElementById('otCard').classList.remove('hidden');
-    document.getElementById('submitCard').classList.add('hidden'); // รอเลือกโอทีก่อน
   } else {
     document.getElementById('otCard').classList.add('hidden');
-    document.getElementById('submitCard').classList.remove('hidden');
+    submitRecord(); // ไม่ต้องเลือกโอที -> บันทึกอัตโนมัติทันที
   }
 }
 
@@ -380,20 +420,33 @@ function setOt(choice) {
   document.getElementById('otYesBtn').classList.toggle('active', choice === 'OT');
   document.getElementById('otNoBtn').classList.toggle('active', choice === 'NO');
   document.getElementById('otDetail').classList.toggle('hidden', choice !== 'OT');
-  document.getElementById('submitCard').classList.remove('hidden');
+
+  if (choice === 'NO') {
+    submitRecord(); // ไม่โอที -> บันทึกอัตโนมัติทันที
+  } else {
+    document.getElementById('submitCard').classList.remove('hidden'); // โอที -> ต้องกรอกรายละเอียดแล้วกดยืนยันเอง
+  }
 }
 
 // ---------- ส่งข้อมูล ----------
 function submitRecord() {
-  if (!state.photoBase64) { alert('กรุณาถ่ายรูปก่อน'); return; }
-  if (state.needsOt && !state.otChoice) { alert('กรุณาเลือกโอทีหรือไม่โอที'); return; }
+  if (!state.photoBase64) { return; } // ยังไม่ได้ถ่ายรูป (ไม่ควรเกิดขึ้นเพราะฟังก์ชันนี้ถูกเรียกหลังถ่ายรูปเสมอ)
+  if (state.needsOt && !state.otChoice) { return; } // ยังไม่ได้เลือกโอที
   if (state.needsOt && state.otChoice === 'OT' && !document.getElementById('otDetail').value.trim()) {
-    alert('กรุณาระบุรายละเอียดงานที่ทำ'); return;
+    alert('กรุณาระบุรายละเอียดงานที่ทำ ก่อนกดยืนยัน');
+    return;
   }
 
+  const submitCardVisible = !document.getElementById('submitCard').classList.contains('hidden');
   const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> กำลังบันทึก...';
+  const autoWrap = document.getElementById('autoResultWrap');
+
+  if (submitCardVisible) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> กำลังบันทึก...';
+  } else {
+    autoWrap.innerHTML = '<div class="card center"><span class="spinner" style="border-top-color:transparent;border-color:#1a6b3c;border-top-color:transparent"></span> กำลังบันทึกเวลาอัตโนมัติ...</div>';
+  }
 
   const payload = {
     group: state.group,
@@ -407,20 +460,27 @@ function submitRecord() {
 
   apiPost(action, payload)
     .then(res => {
-      btn.disabled = false;
-      btn.textContent = 'บันทึกเวลา';
-      const msgDiv = document.getElementById('resultMsg');
-      if (res.success) {
-        msgDiv.innerHTML = '<div class="msg ok">✅ ' + res.message + '</div>';
-        btn.style.display = 'none';
+      const html = res.success
+        ? '<div class="msg ok">✅ ' + res.message + '</div>'
+        : '<div class="msg err">⚠️ ' + res.message + '</div>';
+      if (submitCardVisible) {
+        btn.disabled = false;
+        btn.textContent = 'ยืนยันบันทึกเวลา';
+        document.getElementById('resultMsg').innerHTML = html;
+        if (res.success) btn.style.display = 'none';
       } else {
-        msgDiv.innerHTML = '<div class="msg err">⚠️ ' + res.message + '</div>';
+        autoWrap.innerHTML = '<div class="card">' + html + '</div>';
       }
     })
     .catch(err => {
-      btn.disabled = false;
-      btn.textContent = 'บันทึกเวลา';
-      document.getElementById('resultMsg').innerHTML = '<div class="msg err">⚠️ เกิดข้อผิดพลาด: ' + err.message + '</div>';
+      const html = '<div class="msg err">⚠️ เกิดข้อผิดพลาด: ' + err.message + '</div>';
+      if (submitCardVisible) {
+        btn.disabled = false;
+        btn.textContent = 'ยืนยันบันทึกเวลา';
+        document.getElementById('resultMsg').innerHTML = html;
+      } else {
+        autoWrap.innerHTML = '<div class="card">' + html + '</div>';
+      }
     });
 }
 </script>
