@@ -503,7 +503,7 @@ function evaluateOtAndAct() {
     const isLate = nowStr > NORMAL_CHECKOUT;
     const isOverMax = state.checkinTime ? (workedMinutes > MAX_WORK_MINUTES) : false;
     needsOt = isLate || isOverMax;
-    document.getElementById('otLabel').textContent = '5. เลิกงานหลังเวลาปกติ หรือทำงานเกิน 9 ชม. 30 นาที — เลือกโอที';
+    document.getElementById('otLabel').textContent = '5. เลิกงานหลังเวลาปกติ หรือ มีโอที';
   }
 
   state.needsOt = needsOt;
