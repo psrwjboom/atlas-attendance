@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <!--
   ไฟล์นี้เป็นหน้าเว็บสำหรับพนักงาน "แยกต่างหาก" จาก Google Apps Script
@@ -111,6 +110,17 @@
     .center { text-align: center; }
     .clock { font-size: 32px; font-weight: 800; color: var(--primary-dark); text-align: center; margin: 4px 0 2px; }
     .datestr { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+
+    .card-title { font-size: 14px; font-weight: 700; color: var(--primary-dark); margin-bottom: 10px; }
+    .checkedin-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 9px 0; border-bottom: 1px solid #eef1ef; font-size: 13.5px;
+    }
+    .checkedin-row:last-child { border-bottom: none; }
+    .ci-name { font-weight: 700; color: var(--text); }
+    .ci-time { color: var(--muted); font-size: 12.5px; text-align: right; }
+    .ci-time.done { color: var(--primary-dark); }
+    .empty-note, .muted-loading { color: var(--muted); font-size: 13px; text-align: center; padding: 6px 0; }
   </style>
 </head>
 <body>
@@ -132,6 +142,12 @@
       <button class="group-btn" id="btnATL" onclick="selectGroup('ATL')">ATL<br><span style="font-weight:400;font-size:12px">พนักงานบริษัท</span></button>
       <button class="group-btn" id="btnCC" onclick="selectGroup('CC')">CC<br><span style="font-weight:400;font-size:12px">พนักงานซับ</span></button>
     </div>
+  </div>
+
+  <!-- กล่องแสดงพนักงานที่ลงเวลาเข้างานแล้ววันนี้ -->
+  <div class="card hidden" id="checkedInCard">
+    <div class="card-title">✅ พนักงานที่เข้างานแล้ววันนี้</div>
+    <div id="checkedInListWrap"><div class="muted-loading">กำลังโหลด...</div></div>
   </div>
 
   <!-- STEP 2: ชื่อ -->
@@ -158,7 +174,7 @@
     <video id="video" autoplay playsinline class="hidden"></video>
     <img id="photoPreview" />
     <canvas id="canvas" class="hidden"></canvas>
-    <button class="btn secondary" id="startCamBtn" onclick="startCamera()">เปิดกล้อง</button>
+    <button class="btn secondary hidden" id="startCamBtn" onclick="startCamera()">ลองเปิดกล้องอีกครั้ง</button>
     <button class="btn" id="captureBtn" onclick="capturePhoto()" style="display:none">📸 ถ่ายรูป (บันทึกอัตโนมัติ)</button>
     <button class="btn secondary" id="retakeBtn" style="display:none" onclick="retakePhoto()">ถ่ายใหม่</button>
   </div>
@@ -236,6 +252,7 @@ function selectGroup(g) {
   document.getElementById('btnATL').classList.toggle('active', g === 'ATL');
   document.getElementById('btnCC').classList.toggle('active', g === 'CC');
   document.getElementById('nameCard').classList.remove('hidden');
+  document.getElementById('checkedInCard').classList.remove('hidden');
   resetFrom('name');
 
   const sel = document.getElementById('nameSelect');
@@ -248,6 +265,32 @@ function selectGroup(g) {
     })
     .catch(() => {
       sel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ ตรวจสอบ WEBAPP_URL</option>';
+    });
+
+  loadCheckedInList();
+}
+
+function loadCheckedInList() {
+  if (!state.group) return;
+  const wrap = document.getElementById('checkedInListWrap');
+  wrap.innerHTML = '<div class="muted-loading">กำลังโหลด...</div>';
+  apiGet('getCheckedInToday', { group: state.group })
+    .then(res => {
+      const list = res.success ? res.data : [];
+      if (!list.length) {
+        wrap.innerHTML = '<div class="empty-note">ยังไม่มีใครลงเวลาเข้างานวันนี้</div>';
+        return;
+      }
+      wrap.innerHTML = list.map(r => {
+        const statusNote = r.checkinStatus && r.checkinStatus !== 'ปกติ' ? ' (' + r.checkinStatus + ')' : '';
+        const outNote = r.checkoutTime
+          ? '<span class="ci-time done">เข้า ' + r.checkinTime + statusNote + ' · ออก ' + r.checkoutTime + '</span>'
+          : '<span class="ci-time">เข้า ' + r.checkinTime + statusNote + '</span>';
+        return '<div class="checkedin-row"><span class="ci-name">' + r.name + '</span>' + outNote + '</div>';
+      }).join('');
+    })
+    .catch(() => {
+      wrap.innerHTML = '<div class="empty-note">โหลดรายชื่อไม่สำเร็จ</div>';
     });
 }
 
@@ -263,7 +306,7 @@ function resetFrom(fromStep) {
   state.action = null; state.photoBase64 = null; state.needsOt = false; state.otChoice = null;
   document.getElementById('photoPreview').style.display = 'none';
   document.getElementById('video').classList.add('hidden');
-  document.getElementById('startCamBtn').style.display = 'block';
+  document.getElementById('startCamBtn').classList.add('hidden');
   document.getElementById('captureBtn').style.display = 'none';
   document.getElementById('retakeBtn').style.display = 'none';
   stopCamera();
@@ -313,25 +356,27 @@ function selectAction(action) {
   state.photoBase64 = null;
   document.getElementById('photoPreview').style.display = 'none';
   document.getElementById('video').classList.add('hidden');
-  document.getElementById('startCamBtn').style.display = 'block';
+  document.getElementById('startCamBtn').classList.add('hidden');
   document.getElementById('captureBtn').style.display = 'none';
   document.getElementById('retakeBtn').style.display = 'none';
   stopCamera();
+  startCamera(); // เปิดกล้องอัตโนมัติทันทีที่เลือกลงเวลาเข้า/ออก
 }
 
 // ---------- กล้อง ----------
 function startCamera() {
+  document.getElementById('startCamBtn').classList.add('hidden');
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
     .then(stream => {
       state.stream = stream;
       const video = document.getElementById('video');
       video.srcObject = stream;
       video.classList.remove('hidden');
-      document.getElementById('startCamBtn').style.display = 'none';
       document.getElementById('captureBtn').style.display = 'block';
     })
     .catch(err => {
-      alert('เปิดกล้องไม่สำเร็จ: ' + err.message + '\\nกรุณาอนุญาตการใช้กล้องในเบราว์เซอร์');
+      document.getElementById('startCamBtn').classList.remove('hidden'); // ให้กดลองใหม่ได้ถ้าเปิดไม่สำเร็จ
+      alert('เปิดกล้องไม่สำเร็จ: ' + err.message + '\\nกรุณาอนุญาตการใช้กล้องในเบราว์เซอร์ แล้วกด "ลองเปิดกล้องอีกครั้ง"');
     });
 }
 
@@ -345,12 +390,13 @@ function stopCamera() {
 function capturePhoto() {
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
-  const targetW = 480;
-  const targetH = Math.round(video.videoHeight * (targetW / video.videoWidth)) || 360;
+  const targetW = 640;
+  const targetH = Math.round(video.videoHeight * (targetW / video.videoWidth)) || 480;
   canvas.width = targetW; canvas.height = targetH;
   canvas.getContext('2d').drawImage(video, 0, 0, targetW, targetH);
-  // บีบคุณภาพเพื่อให้ base64 สั้นพอใส่ในเซลล์ชีตได้ (<50,000 ตัวอักษร)
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+  // รูปจะถูกอัปโหลดขึ้น Google Drive แล้วแสดงเป็นภาพย่อในชีตด้วยสูตร IMAGE()
+  // (ไม่ได้จำกัดด้วยขีดจำกัด 50,000 ตัวอักษรต่อเซลล์อีกต่อไป จึงตั้งคุณภาพสูงขึ้นได้)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
   state.photoBase64 = dataUrl;
 
   const preview = document.getElementById('photoPreview');
@@ -471,6 +517,7 @@ function submitRecord() {
       } else {
         autoWrap.innerHTML = '<div class="card">' + html + '</div>';
       }
+      if (res.success) loadCheckedInList(); // อัปเดตกล่องพนักงานที่เข้างานแล้วให้ล่าสุด
     })
     .catch(err => {
       const html = '<div class="msg err">⚠️ เกิดข้อผิดพลาด: ' + err.message + '</div>';
