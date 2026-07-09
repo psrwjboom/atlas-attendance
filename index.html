@@ -119,6 +119,10 @@
     }
     .checkedin-row:last-child { border-bottom: none; }
     .ci-name { font-weight: 700; color: var(--text); }
+    .ci-group {
+      display: inline-block; font-size: 10.5px; font-weight: 700; color: var(--muted);
+      background: #eef1ef; border-radius: 5px; padding: 1px 5px; margin-left: 4px; vertical-align: 1px;
+    }
     .ci-time { color: var(--muted); font-size: 12.5px; text-align: right; }
     .ci-time.done { color: var(--primary-dark); }
     .empty-note, .muted-loading { color: var(--muted); font-size: 13px; text-align: center; padding: 6px 0; }
@@ -146,7 +150,7 @@
   </div>
 
   <!-- กล่องแสดงพนักงานที่ลงเวลาเข้างานแล้ววันนี้ -->
-  <div class="card hidden" id="checkedInCard">
+  <div class="card" id="checkedInCard">
     <div class="card-title">✅ พนักงานที่เข้างานแล้ววันนี้</div>
     <div id="checkedInListWrap"><div class="muted-loading">กำลังโหลด...</div></div>
   </div>
@@ -253,7 +257,6 @@ function selectGroup(g) {
   document.getElementById('btnATL').classList.toggle('active', g === 'ATL');
   document.getElementById('btnCC').classList.toggle('active', g === 'CC');
   document.getElementById('nameCard').classList.remove('hidden');
-  document.getElementById('checkedInCard').classList.remove('hidden');
   resetFrom('name');
 
   const sel = document.getElementById('nameSelect');
@@ -267,33 +270,41 @@ function selectGroup(g) {
     .catch(() => {
       sel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ ตรวจสอบ WEBAPP_URL</option>';
     });
-
-  loadCheckedInList();
 }
 
+// โหลดรายชื่อพนักงานที่เข้างานแล้ววันนี้ "ทั้ง 2 กลุ่ม" (ATL และ CC) มาแสดงรวมกัน
+// เรียกตั้งแต่เปิดหน้าเว็บครั้งแรก ไม่ต้องรอเลือกกลุ่มก่อน
 function loadCheckedInList() {
-  if (!state.group) return;
   const wrap = document.getElementById('checkedInListWrap');
   wrap.innerHTML = '<div class="muted-loading">กำลังโหลด...</div>';
-  apiGet('getCheckedInToday', { group: state.group })
-    .then(res => {
-      const list = res.success ? res.data : [];
-      if (!list.length) {
+  Promise.all([
+    apiGet('getCheckedInToday', { group: 'ATL' }),
+    apiGet('getCheckedInToday', { group: 'CC' })
+  ])
+    .then(([atlRes, ccRes]) => {
+      const atlList = (atlRes.success ? atlRes.data : []).map(r => Object.assign({ group: 'ATL' }, r));
+      const ccList = (ccRes.success ? ccRes.data : []).map(r => Object.assign({ group: 'CC' }, r));
+      const combined = atlList.concat(ccList).sort((a, b) => (a.checkinTime < b.checkinTime ? -1 : 1));
+
+      if (!combined.length) {
         wrap.innerHTML = '<div class="empty-note">ยังไม่มีใครลงเวลาเข้างานวันนี้</div>';
         return;
       }
-      wrap.innerHTML = list.map(r => {
+      wrap.innerHTML = combined.map(r => {
         const statusNote = r.checkinStatus && r.checkinStatus !== 'ปกติ' ? ' (' + r.checkinStatus + ')' : '';
         const outNote = r.checkoutTime
           ? '<span class="ci-time done">เข้า ' + r.checkinTime + statusNote + ' · ออก ' + r.checkoutTime + '</span>'
           : '<span class="ci-time">เข้า ' + r.checkinTime + statusNote + '</span>';
-        return '<div class="checkedin-row"><span class="ci-name">' + r.name + '</span>' + outNote + '</div>';
+        return '<div class="checkedin-row"><span class="ci-name">' + r.name +
+          ' <span class="ci-group">' + r.group + '</span></span>' + outNote + '</div>';
       }).join('');
     })
     .catch(() => {
-      wrap.innerHTML = '<div class="empty-note">โหลดรายชื่อไม่สำเร็จ</div>';
+      wrap.innerHTML = '<div class="empty-note">โหลดรายชื่อไม่สำเร็จ ตรวจสอบ WEBAPP_URL</div>';
     });
 }
+loadCheckedInList(); // โหลดทันทีตั้งแต่เปิดหน้าเว็บ
+
 
 // รีเซ็ตกลับไปหน้าแรกทั้งหมด (เลือกกลุ่มใหม่) หลังบันทึกเวลาสำเร็จ
 // เพื่อให้พนักงานคนต่อไปใช้เครื่องต่อได้ทันทีโดยไม่เห็นข้อมูล/รูปของคนก่อนหน้า
@@ -303,8 +314,7 @@ function resetToStart() {
   state.knownCheckinTime = null;
   document.getElementById('btnATL').classList.remove('active');
   document.getElementById('btnCC').classList.remove('active');
-  document.getElementById('checkedInCard').classList.add('hidden');
-  document.getElementById('checkedInListWrap').innerHTML = '<div class="muted-loading">กำลังโหลด...</div>';
+  loadCheckedInList(); // รีเฟรชกล่องพนักงานที่เข้างานแล้ว (กล่องนี้แสดงตลอด ไม่ซ่อน)
   document.getElementById('nameCard').classList.add('hidden');
   document.getElementById('nameSelect').innerHTML = '<option value="">-- เลือกชื่อ --</option>';
   document.getElementById('actionCard').classList.add('hidden');
